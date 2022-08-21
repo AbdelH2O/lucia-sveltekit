@@ -1,6 +1,7 @@
 import type { Handle } from "@sveltejs/kit";
 import type { Context } from "./index.js";
 import cookie from "cookie";
+import jwt from "jsonwebtoken";
 import { LuciaError } from "../utils/error.js";
 import {
     createAccessToken,
@@ -81,11 +82,17 @@ export const handleTokensFunction = (context: Context) => {
                 refresh_token: newRefreshToken.value,
             };
             const response = await resolve(event);
+            const token = jwt.sign({
+                user_id: userId,
+            }, context.secret, {
+                expiresIn: 15 * 60,
+            });
             response.headers.set(
                 "set-cookie",
                 [
                     accessToken.createCookie(),
                     newEncryptedRefreshToken.createCookie(),
+                    `supabase_token=${token}; Max-Age=900; Path=/; HttpOnly; SameSite=Lax;`,
                 ].join(",")
             );
             return response;
