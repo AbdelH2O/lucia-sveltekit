@@ -48,10 +48,10 @@ export class AccessToken<UserData extends {}> extends Token {
                 User<UserData> & TokenData
             >;
             await compare(fingerprintToken, userSession.fingerprint_hash || "");
-            if (userSession.role !== "access_token") throw new Error();
+            if (userSession.lrole !== "access_token") throw new Error();
             delete userSession.fingerprint_hash;
             delete userSession.exp, delete userSession.iat;
-            delete userSession.role;
+            delete userSession.lrole;
             const user = userSession as User<UserData>;
             return user;
         } catch {
@@ -97,10 +97,10 @@ export class RefreshToken extends Token {
             const userSession = jwt.decode(this.value) as {
                 fingerprint_hash: string;
                 user_id: string;
-                role: string;
+                lrole: string;
             };
             await compare(fingerprint, userSession.fingerprint_hash || "");
-            if (userSession.role !== "refresh_token") throw new Error();
+            if (userSession.lrole !== "refresh_token") throw new Error();
             return userSession.user_id;
         } catch (e) {
             throw new LuciaError("AUTH_INVALID_REFRESH_TOKEN");

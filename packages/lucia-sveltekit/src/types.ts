@@ -40,7 +40,7 @@ export interface TokenData {
     fingerprint_hash: string;
     iat: number;
     exp: number;
-    role: "access_token" | "refresh_token"
+    lrole: "access_token" | "refresh_token"
 }
 
 export type DatabaseUser<UserData> = {
