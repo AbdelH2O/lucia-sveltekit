@@ -1,15 +1,23 @@
+import type { LoadEvent, ServerLoadEvent } from "./kit.js";
 import type { LuciaError } from "./utils/error.js";
+import type {
+    FingerprintToken,
+    RefreshToken,
+    AccessToken,
+} from "./utils/token.js";
+
+type getSession = () => Promise<Session>;
+export type AuthServerLoadEvent = ServerLoadEvent & { getSession: getSession };
+export type AuthLoadEvent = LoadEvent & { getSession: getSession };
 
 export interface Adapter {
     getUserByRefreshToken: (
         refreshToken: string
-    ) => Promise<DatabaseUser<Record<string, any>> | null>;
+    ) => Promise<DatabaseUser | null>;
     getUserByIdentifierToken: (
         identifierToken: string
-    ) => Promise<DatabaseUser<Record<string, any>> | null>;
-    getUserById: (
-        identifierToken: string
-    ) => Promise<DatabaseUser<Record<string, any>> | null>;
+    ) => Promise<DatabaseUser | null>;
+    getUserById: (identifierToken: string) => Promise<DatabaseUser | null>;
     setUser: (
         userId: string,
         data: {
@@ -29,10 +37,10 @@ export interface Adapter {
             hashed_password?: string | null;
             user_data?: Record<string, any>;
         }
-    ) => Promise<DatabaseUser<Record<string, any>>>;
+    ) => Promise<DatabaseUser>;
 }
 
-export type User<UserData extends {}> = UserData & {
+export type User = Lucia.UserData & {
     user_id: string;
 };
 
@@ -43,17 +51,30 @@ export interface TokenData {
     lrole: "access_token" | "refresh_token"
 }
 
-export type DatabaseUser<UserData> = {
+export interface AccessTokenJwtV2 extends TokenData {
+    user: User;
+    ver: 2;
+    role: "access_token";
+}
+export type DatabaseUser = {
     id: string;
     hashed_password: string | null;
     identifier_token: string;
-} & UserData;
+} & Lucia.UserData;
 
-export type Session<UserData extends {}> = {
-    user: User<UserData>;
+export type Session = {
+    user: User;
     access_token: string;
     refresh_token: string;
 } | null;
 
+export interface ServerSession {
+    user: User;
+    access_token: AccessToken;
+    refresh_token: RefreshToken;
+    fingerprint_token: FingerprintToken;
+    cookies: string[];
+}
+
 export type Env = "DEV" | "PROD";
-export type Error = typeof LuciaError
+export type Error = typeof LuciaError;

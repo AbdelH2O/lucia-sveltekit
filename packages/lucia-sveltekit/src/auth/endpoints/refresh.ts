@@ -1,7 +1,7 @@
 import { LuciaError } from "../../utils/error.js";
 import cookie from "cookie";
 import { createAccessToken, createRefreshToken, getAccountFromDatabaseData } from "../../utils/auth.js";
-import type { RequestEvent } from "@sveltejs/kit";
+import type { RequestEvent } from "../../kit.js";
 import { ErrorResponse } from "./index.js";
 import type { Context } from "../index.js";
 import { FingerprintToken, RefreshToken } from "../../utils/token.js";
@@ -15,8 +15,10 @@ export const handleRefreshRequest = async (
             event.request.headers.get("Authorization") || "";
         const [tokenType, token] = authorizationHeader.split(" ");
         if (!tokenType || !token) throw new LuciaError("REQUEST_UNAUTHORIZED");
-        if (tokenType !== "Bearer")
+        if (tokenType !== "Bearer") {
+            console.error("Missing token type Bearer")
             throw new LuciaError("REQUEST_UNAUTHORIZED");
+        }
         if (!token) throw new LuciaError("REQUEST_UNAUTHORIZED");
         const cookies = cookie.parse(event.request.headers.get("cookie") || "");
         const fingerprintToken = new FingerprintToken(
@@ -28,12 +30,14 @@ export const handleRefreshRequest = async (
         try {
             userId = await refreshToken.userId(fingerprintToken.value);
         } catch {
+            console.error("Invalid refresh or fingerprint token")
             throw new LuciaError("REQUEST_UNAUTHORIZED");
         }
         const databaseData = await context.adapter.getUserByRefreshToken(
             refreshToken.value
         );
         if (!databaseData) {
+            console.error("Refresh token not found in db")
             await context.adapter.deleteUserRefreshTokens(userId);
             throw new LuciaError("REQUEST_UNAUTHORIZED");
         }
@@ -61,8 +65,8 @@ export const handleRefreshRequest = async (
             {
                 headers: {
                     "set-cookie": [
-                        accessToken.createCookie(),
-                        newEncryptedRefreshToken.createCookie(),
+                        accessToken.cookie(),
+                        newEncryptedRefreshToken.cookie(),
                     ].join(","),
                 },
             }

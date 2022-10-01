@@ -1,28 +1,17 @@
 import { LuciaError } from "../utils/error.js";
 import type { Context } from "./index.js";
 import cookie from "cookie";
-import type { User } from "../types.js";
+import type { ServerSession } from "../types.js";
 import {
     AccessToken,
     FingerprintToken,
     EncryptedRefreshToken,
-    RefreshToken,
 } from "../utils/token.js";
 import { Error } from "../index.js";
 
-export type ValidateRequest<UserData extends {}> = (
-    request: Request
-) => Promise<{
-    user: User<UserData>;
-    access_token: AccessToken<UserData>;
-    refresh_token: RefreshToken;
-    fingerprint_token: FingerprintToken;
-    cookies: string[];
-}>;
-export const validateRequestFunction = <UserData extends {}>(
-    context: Context
-) => {
-    const validateRequest: ValidateRequest<UserData> = async (request) => {
+type ValidateRequest = (request: Request) => Promise<ServerSession>;
+export const validateRequestFunction = (context: Context) => {
+    const validateRequest: ValidateRequest = async (request) => {
         const clonedReq = request.clone();
         const authorizationHeader =
             clonedReq.headers.get("Authorization") || "";
@@ -37,73 +26,64 @@ export const validateRequestFunction = <UserData extends {}>(
             cookies.fingerprint_token,
             context
         );
-        const accessToken = new AccessToken<UserData>(token, context);
+        const accessToken = new AccessToken(token, context);
         const encryptedRefreshToken = new EncryptedRefreshToken(
             cookies.encrypt_refresh_token,
             context
         );
-        const refreshToken = encryptedRefreshToken.decrypt();
-        const user = await accessToken.user(fingerprintToken.value);
+        const refreshToken = encryptedRefreshToken.decrypt(); // throws AUTH_INVALID_REFRESH_TOKEN if invalid
+        const user = await accessToken.user(fingerprintToken.value); // throws AUTH_INVALID_ACCESS_TOKEN if either token is invalid
         return {
             user,
             access_token: accessToken,
             refresh_token: refreshToken,
             fingerprint_token: fingerprintToken,
             cookies: [
-                cookies.access_token,
-                cookies.encrypt_refresh_token,
-                cookies.fingerprint_token,
+                accessToken.cookie(),
+                refreshToken.cookie(),
+                fingerprintToken.cookie(),
             ],
         };
     };
     return validateRequest;
 };
 
-export type ValidateRequestByCookie<UserData extends {}> = (
+export type ValidateRequestByCookie = (
     request: Request
-) => Promise<{
-    user: User<UserData>;
-    access_token: AccessToken<UserData>;
-    refresh_token: RefreshToken;
-    fingerprint_token: FingerprintToken;
-    cookies: string[];
-}>;
+) => Promise<ServerSession>;
 
-export const validateRequestByCookieFunction = <UserData extends {}>(
-    context: Context
-) => {
-    const validateRequestByCookie: ValidateRequest<UserData> = async (
-        request
-    ) => {
+export const validateRequestByCookieFunction = (context: Context) => {
+    const validateRequestByCookie: ValidateRequest = async (request) => {
         const clonedReq = request.clone();
         const method = clonedReq.method;
-        if (method !== "GET") throw new Error("AUTH_INVALID_REQUEST");
+        if (method !== "GET") throw new Error("AUTH_INVALID_REQUEST_METHOD");
         const cookies = cookie.parse(clonedReq.headers.get("cookie") || "");
         const fingerprintToken = new FingerprintToken(
             cookies.fingerprint_token,
             context
         );
-        const accessToken = new AccessToken<UserData>(
-            cookies.access_token,
-            context
-        );
+        const accessToken = new AccessToken(cookies.access_token, context);
         const user = await accessToken.user(fingerprintToken.value);
         const encryptedRefreshToken = new EncryptedRefreshToken(
             cookies.encrypt_refresh_token,
             context
         );
-        const refreshToken = encryptedRefreshToken.decrypt();
-        return {
-            user,
-            access_token: accessToken,
-            refresh_token: refreshToken,
-            fingerprint_token: fingerprintToken,
-            cookies: [
-                cookies.access_token,
-                cookies.encrypt_refresh_token,
-                cookies.fingerprint_token,
-            ],
-        };
+        try {
+            const refreshToken = encryptedRefreshToken.decrypt();
+            return {
+                user,
+                access_token: accessToken,
+                refresh_token: refreshToken,
+                fingerprint_token: fingerprintToken,
+                cookies: [
+                    accessToken.cookie(),
+                    refreshToken.cookie(),
+                    fingerprintToken.cookie(),
+                ],
+            };
+        } catch {
+            throw new Error("AUTH_INVALID_REFRESH_TOKEN");
+        }
     };
     return validateRequestByCookie;
 };

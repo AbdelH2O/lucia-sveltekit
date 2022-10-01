@@ -1,6 +1,6 @@
 {
     "name": "@lucia-sveltekit/adapter-prisma",
-    "version": "0.3.1",
+    "version": "0.3.3",
     "description": "Prisma adapter for Lucia",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
@@ -30,16 +30,11 @@
     },
     "devDependencies": {
         "@lucia-sveltekit/adapter-test": "workspace:*",
-        "lucia-sveltekit": "workspace:*",
         "ts-node": "^10.9.1"
     },
     "dependencies": {
         "@prisma/client": "^4.1.0",
-        "@supabase/postgrest-js": "^0.37.4",
-        "bcryptjs": "^2.4.3",
-        "cookie": "^0.5.0",
-        "jsonwebtoken": "^8.5.1",
-        "nanoid": "^4.0.0",
-        "prisma": "^4.1.1"
+        "prisma": "^4.1.1",
+        "lucia-sveltekit": "workspace:*"
     }
 }

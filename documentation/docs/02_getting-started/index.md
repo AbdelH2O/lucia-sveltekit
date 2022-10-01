@@ -4,14 +4,14 @@
 npm install lucia-sveltekit
 ```
 
-## Setting up Lucia
+## Set up Lucia
 
-In `$lib/lucia.ts`, import `lucia` and export it (in this case as `auth`). During this step, lucia requires 3 things: an adapter, a secret, and env. An adapter connects lucia to your database, secret is used to encrypt and hash your data, and env tells Lucia if it's running in development or production environment. Different adapters are needed for different databases, and it can be easily created if Lucia doesn't provide one.
+In `$lib/server/lucia.ts`, import `lucia` and export it (in this case as `auth`). During this step, lucia requires 3 things: an adapter, a secret key, and the current environment. An adapter connects lucia to your database, secret is used to encrypt and hash your data, and env tells Lucia if it's running in development or production environment. Different adapters are needed for different databases, and it can be easily created if Lucia doesn't provide one.
 
 ```js
 import lucia from "lucia-sveltekit";
 import supabase from "@lucia-sveltekit/adapter-supabase";
-import { dev } from "$app/env";
+import { dev } from "$app/environment";
 
 export const auth = lucia({
     adapter: supabase(),
@@ -20,42 +20,65 @@ export const auth = lucia({
 });
 ```
 
-For Lucia to work, its own handle functions must be added to hooks (`/src/hooks/index.js`).
-
-```js
-export const handle = auth.handleAuth;
-```
-
-This is mainly for 2 things:
-
-1. Automatically refresh tokens on server-side navigation
-2. Listen for requests to endpoints that Lucia exposes (creates) for token refresh and sign outs. Make sure to not have existing endpoints that overlaps with them. These endpoints are:
-    - /api/auth/refresh
-    - /api/auth/logout
-
-Finally, create `/+layout.svelte` and `/+layout.server.js`. 
-
-In `/+layout.svelte`, import the `Lucia` wrapper. Access tokens expire in 15 minutes. Lucia will refresh the access token (if expired) on server side navigation using hooks and the wrapper will refresh the token automatically on expiration in the client. This should be placed inside the top layout file.
-
-```tsx
-import { Lucia } from "lucia-sveltekit/client";
-```
-
-```tsx
-<Lucia>
-    <slot />
-</Lucia>
-```
-
-In `/+layout.server.ts`, create a load function. This makes users' data available both in load functions and in pages.
+For Lucia to work, its own handle functions must be added to hooks (`/src/hooks.server.ts`).
 
 ```ts
-import { auth } from "$lib/lucia.js";
+import { auth } from "$lib/server/lucia";
 
-export const load = auth.getAuthSession
+export const handle = auth.handleHooks();
 ```
 
-## Creating a user
+`sequence()` can be used to chain multiple handle functions.
+
+```ts
+import { auth } from "$lib/server/lucia";
+import { sequence } from "@sveltejs/kit";
+
+export const handle = sequence(auth.handleHooks(), customHandle);
+```
+
+This is so Lucia can listen for requests to endpoints that Lucia exposes (creates) for token refresh and sign outs. Make sure to not have existing endpoints that overlaps with them:
+
+-   /api/auth/refresh
+-   /api/auth/logout
+
+Finally, create `/+layout.svelte` and `/+layout.server.ts`.
+
+In `/+layout.server.ts`, create a load function. This will check if the access token has expired and refresh it if so. This also exposes the user data to the client.
+
+```ts
+// +layout.server.ts
+import { auth } from "$lib/server/lucia";
+
+export const load = auth.handleServerSession();
+```
+
+`handleServerSession()` can also take a server load function which will run like a normal load function.
+
+```ts
+// +layout.server.ts
+import { auth } from "$lib/server/lucia";
+
+export const load = auth.handleServerSession(async () => {
+    return {
+        message: "hello",
+    };
+});
+```
+
+In `/+layout.svelte`, import `handleSilentRefresh`. This will refresh the access token when it nears expiration.
+
+```html
+<script>
+    import { handleSilentRefresh } from "lucia-sveltekit/client";
+
+    handleSilentRefresh();
+</script>
+
+<slot />
+```
+
+## Create a user
 
 ### The basic steps
 
@@ -65,31 +88,32 @@ export const load = auth.getAuthSession
 4. Save the cookies returned by Lucia
 5. In the client, redirect the user
 
-> When redirecting a user after auth state change (signin, signout), use `window.location.href` in the client or http respose redirect in the server instead of SvelteKit's `goto()` as `goto()` will not update the cookies.
+> When redirecting a user after auth state change (signin, signout), use `window.location.href` in the client or http response redirect in the server instead of SvelteKit's `invalidateAll()` + `goto()`.
 
 ### Implementation
 
 `auth.createUser` creates a new user and returns a few tokens and cookies.
 
-The first parameter is the auth id, and the second parameter is the identifier. The third paramter is optional, and you can provide a password and user data to be saved alongside other data. In the example below, `email` will be saved as its own column in the `user` table.
+The first parameter is the auth method, and the second parameter is the identifier. The third parameter is optional, and you can provide a password and user data to be saved alongside other data. In the example below, `email` will be saved as its own column in the `user` table.
 
 After creating a user, Lucia will return a set of tokens and cookies. These cookies should be saved to the user using the `set-cookie` headers.
 
 ```js
-export const POST = async () => {
+// +server.ts
+import { auth } from "$lib/server/lucia";
+import { setCookie } from "lucia-sveltekit";
+import type { Actions } from "@sveltejs/kit";
+
+export const POST: RequestHandler = async ({ cookies }) => {
     // ...
     try {
-        const createUser = await auth.createUser("email", email, {
+        const userSession = await auth.createUser("email", email, {
             password,
             user_data: {
                 email,
             },
         });
-        return {
-            headers: {
-                "set-cookie": createUser.cookies, // set cookeis
-            },
-        };
+        setCookie(cookies, userSession.cookies);
     } catch {
         // handle errors
     }
@@ -97,19 +121,18 @@ export const POST = async () => {
 ```
 
 ```ts
-// for POST actions
-export const POST = async ({ setHeaders }) => {
-    // ...
-    try {
-        // same as above
-        setHeaders("set-cookie", createUser.cookies)
-        return;
-    } catch {
-        // handle errors
-    }
+// +page.server.ts
+import { setCookie } from "lucia-sveltekit";
+import type { Actions } from "@sveltejs/kit";
+
+export const actions: Actions = {
+    default: async ({ cookies }) => {
+        // ... same as above
+    },
+};
 ```
 
-## Authenticating a user
+## Authenticate users
 
 ### The basic steps
 
@@ -120,72 +143,97 @@ export const POST = async ({ setHeaders }) => {
 
 `auth.authenticateUser` authenticates a user using an identifier and (if necessary) a password.
 
-The first parameter is the auth id and the second parameter is the identifier. The third parameter is the password (if used for that auth id).
+The first parameter is the auth method and the second parameter is the identifier. The third parameter is the password (if used for that auth method).
 
 ```js
-export const POST = async () => {
-    // ...
-    try {
-        const authenticateUser = await auth.authenticateUser(
-            "email",
-            email,
-            password
-        );
-        return {
-            headers: {
-                "set-cookie": authenticateUser.cookies, // set cookeis
-            },
-        };
-    } catch {
-        // invalid input
-    }
-};
-```
+import { auth } from "$lib/server/lucia";
+import { setCookie } from "lucia-sveltekit"
+import type { Actions } from "@sveltejs/kit";
 
-```ts
-// for POST actions
-export const POST = async ({ setHeaders }) => {
-    // ...
-    try {
-        // same as above
-        setHeaders("set-cookie", createUser.cookies)
-        return;
-    } catch {
-        // handle errors
-    }
-```
-
-## Checking if the user is authenticated
-
-Lucia adds the following to `session.lucia` if the user if authenticated, and `session.lucia` is `null` if not (refer to: [`SvelteKitSession`](/references/types#sveltekitsession))
-
-```ts
-{
-    user: User;
-    access_token: string;
-    refresh_token: string;
+export const actions: Actions = {
+    default: async ({ cookies }) => {
+        // ...
+        try {
+            const userSession = await auth.authenticateUser(
+                "email",
+                email,
+                password
+            );
+            setCookie(cookies, ...userSession.cookies)
+            // redirect if needed
+        } catch {
+            // invalid input
+        }
+    };
 }
 ```
 
+For standalone endpoints, cookies can be set using `setHeaders()`.
+
+```ts
+import { auth } from "$lib/server/lucia";
+import type { RequestHandler } from "@sveltejs/kit";
+
+export const POST: RequestHandler = async ({ setHeaders }) => {
+    // ...
+    const userSession = await auth.authenticateUser("email", email, password);
+    setHeaders({
+        "set-cookie", userSession.cookies.join()
+    });
+    // ...
+};
+```
+
+## Check if the user is authenticated
+
+[`Session`](/references/types#session) is an object when a user if authenticated and `null` if not.
+
 ### In the client
 
-```js
+```ts
 import { getSession } from "lucia-sveltekit/client";
 
-const lucia = getSession();
+const session = getSession();
 
-if ($lucia) {
+if ($session) {
     // authenticated
 }
 ```
 
 ### In a load function
 
-```js
-export const load = async ({ parent }) => {
-    const { lucia } = await parent();
-    if (lucia) {
+[`getSession`](/load-apis#getsession) can be used to get the session in a load function. This will wait for a parent load function in a server context and run immediately in a browser context.
+
+```ts
+// +page.ts
+import { getSession } from "lucia-sveltekit/load";
+import type { PageLoad } from "./$types";
+
+export const load: PageLoad = async (event) => {
+    const session = await getSession(event);
+    if (session) {
         // authenticated
+    }
+};
+```
+
+### In a server load function
+
+While `getSession` will also work in a sever load function, since it has to wait for the parent load function, [`validateRequestByCookie`](/server-apis/lucia#validaterequestbycookie) should be used.
+
+```ts
+// +page.server.ts
+import { auth } from "$lib/server/lucia";
+import type { PageServerLoad } from "./$types";
+
+export const load: PageServerLoad = async ({ request }) => {
+    try {
+        const session = await auth.validateRequestByCookie(request);
+        if (session) {
+            // authenticated
+        }
+    } catch {
+        // invalid
     }
 };
 ```
@@ -198,9 +246,12 @@ Lucia provides 2 functions that verifies if a request is valid. **These should n
 
 The access token should be send as a bearer token in the authorization header.
 
-```js
-// endpoint
-export const GET = async ({ request }) => {
+```ts
+// +server.ts
+import { auth } from "$lib/server/lucia";
+import type { RequestHandler } from "@sveltejs/kit";
+
+export const GET: RequestHandler = async ({ request }) => {
     try {
         const user = await auth.validateRequest(request);
         // authenticated
@@ -210,11 +261,13 @@ export const GET = async ({ request }) => {
 };
 ```
 
-```js
-// send request
+```ts
+// +page.svelte
+const session = getSession();
+
 await fetch("/some-endpoint", {
     headers: {
-        Authorization: `Bearer ${access_token}`,
+        Authorization: `Bearer ${$session?.access_token}`,
     },
 });
 ```
@@ -223,9 +276,17 @@ await fetch("/some-endpoint", {
 
 Can be used for page endpoints. **Do NOT use this for POST requests as it is vulnerable to CSRF attacks**, and it will throw an error if it is not a GET request.
 
-```js
-// endpoint
-export const GET = async ({ request }) => {
+```ts
+// +page.svelte
+await fetch("/some-endpoint");
+```
+
+```ts
+// +server.ts
+import { auth } from "$lib/server/lucia";
+import type { RequestHandler } from "@sveltejs/kit";
+
+export const GET: RequestHandler = async ({ request }) => {
     try {
         const user = await auth.validateRequestByCookie(request);
         // authenticated
@@ -235,22 +296,81 @@ export const GET = async ({ request }) => {
 };
 ```
 
-```js
-// send request
-await fetch("/some-endpoint");
+#### Form submissions
+
+Form submissions can be validated using [`validateFormSubmission`](/server-apis/lucia#validateformsubmission). Forms should be sent with an hidden input named `_lucia` with the access token as its value.
+
+```html
+<script>
+    import { getSession } from "lucia-sveltekit/client";
+
+    const session = getSession();
+</script>
+
+<form method="post">
+    <input name="_lucia" value="{$session?.access_token}" type="hidden" />
+</form>
+```
+
+```ts
+// +page.server.ts
+import { auth } from "$lib/server/lucia";
+import type { Actions } from "@sveltejs/kit";
+
+export const actions: Actions = {
+    default: async ({ request }) => {
+        try {
+            const session = await auth.validateFormSubmission(request);
+        } catch {
+            // ...
+        }
+    },
+};
 ```
 
 ## Signing out users
 
-```js
+If a location parameter is provided, `signOut()` will also redirect the user.
+
+```ts
 import { signOut } from "lucia-sveltekit/client";
+
 const signOutUser = async () => {
     try {
-        await signOut();
-        window.location.href = "/";
+        await signOut("/");
     } catch {
         // handle error
     }
+};
+```
+
+## Updating user data
+
+Lucia provides 2 methods to update the user, [`updateUserData`](/server-apis/lucia#updateuserdata) and [`updateUserIdentifierToken`](/server-apis/lucia#updateuseridentifiertoken). While calling these will update the data in the database, the change will not be applied to the user session (ie. `getSession`) until the access token is refreshed. To manually update the session, invalidate the current session's refresh token, create a new session, set the new cookies, and refresh the page.
+
+```ts
+// +page.server.ts
+import { auth } from "$lib/server/lucia";
+import { setCookie } from "lucia-sveltekit";
+import type { Actions } from "@sveltejs/kit";
+
+export const actions: Actions = {
+    default: async ({ request, cookies }) => {
+        try {
+            const session = await auth.validateFormSubmission(request);
+            await auth.updateUserData(session.user.user_id, {
+                email: newEmail,
+            });
+            await auth.invalidateRefreshToken(session.refresh_token);
+            const newSession = await auth.createUserSession(
+                session.user.user_id
+            );
+            setCookie(cookies, ...newSession.cookies);
+            throw redirect(302, "/");
+        } catch {
+            // ...
+        }
+    },
 };
 ```
 
@@ -260,10 +380,10 @@ const signOutUser = async () => {
 
 ```ts
 declare namespace Lucia {
-	interface UserData {}
+    interface UserData {}
 }
 ```
 
-Any data inside `Lucia.UserData` will represent `user_data` (`createUser()`) and `UserData` in [types](/references/types).
+## Deploying the app
 
-
+Apps using Lucia cannot be deployed to edge functions (CloudFlare Workers, Vercel Edge Functions, Netlify Edge Functions) because it has a dependency on Node's crypto module and other Node native APIs.

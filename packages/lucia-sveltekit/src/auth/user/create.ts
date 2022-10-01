@@ -1,34 +1,23 @@
-import type { User } from "../../types.js";
+import type { ServerSession, User } from "../../types.js";
 import {
     createAccessToken,
     createFingerprintToken,
     createRefreshToken,
 } from "../../utils/auth.js";
 import { hash } from "../../utils/crypto.js";
-import type {
-    AccessToken,
-    FingerprintToken,
-    RefreshToken,
-} from "../../utils/token.js";
 import type { Context } from "../index.js";
 
-export type CreateUser<UserData extends {}> = (
+type CreateUser = (
     authId: string,
     identifier: string,
     options: {
         password?: string;
-        user_data?: UserData;
+        user_data?: Lucia.UserData;
     }
-) => Promise<{
-    user: User<UserData>;
-    access_token: AccessToken<UserData>;
-    refresh_token: RefreshToken;
-    fingerprint_token: FingerprintToken;
-    cookies: string[];
-}>;
+) => Promise<ServerSession>;
 
-export const createUserFunction = <UserData extends {}>(context: Context) => {
-    const createUser: CreateUser<UserData> = async (
+export const createUserFunction = (context: Context) => {
+    const createUser: CreateUser = async (
         authId,
         identifier,
         options
@@ -40,13 +29,12 @@ export const createUserFunction = <UserData extends {}>(context: Context) => {
         const user = {
             user_id: userId,
             ...userData,
-        } as User<UserData>;
+        } as User;
         const refreshToken = await createRefreshToken(
             user.user_id,
             fingerprintToken.value,
             context
         );
-        const encryptedRefreshToken = refreshToken.encrypt();
         const hashedPassword = options.password
             ? await hash(options.password)
             : null;
@@ -57,26 +45,17 @@ export const createUserFunction = <UserData extends {}>(context: Context) => {
             user_data: userData,
         });
         await context.adapter.setRefreshToken(refreshToken.value, userId);
-        const accessToken = await createAccessToken<UserData>(
+        const accessToken = await createAccessToken(
             user,
             fingerprintToken.value,
             context
         );
-        const accessTokenCookie = accessToken.createCookie();
-        const encryptedRefreshTokenCookie =
-            encryptedRefreshToken.createCookie();
-        const fingerprintTokenCookie = fingerprintToken.createCookie();
         return {
             user: user,
             access_token: accessToken,
             refresh_token: refreshToken,
             fingerprint_token: fingerprintToken,
-            encrypted_refresh_token: encryptedRefreshToken,
-            cookies: [
-                accessTokenCookie,
-                encryptedRefreshTokenCookie,
-                fingerprintTokenCookie,
-            ],
+            cookies: [accessToken.cookie(), refreshToken.encrypt().cookie(), fingerprintToken.cookie()]
         };
     };
     return createUser;

@@ -1,14 +1,14 @@
 <script lang="ts">
 	import '../app.css';
-
-	import { Lucia } from 'lucia-sveltekit/client';
+	
+	import { handleSilentRefresh } from 'lucia-sveltekit/client';
+	handleSilentRefresh()
 </script>
+
 <svelte:head>
 	<title>Lucia demo</title>
 </svelte:head>
-<Lucia on:error={(e) => console.error(e)}>
-	<slot/>
-</Lucia>
+<slot />
 
 <style lang="postcss">
 	/* I've used @apply to apply tailwind classes for demo purposes to remove/hide as much non-lucia related things
@@ -16,13 +16,18 @@
 	:global(body) {
 		@apply px-4 pt-8 flex flex-col w-full place-items-center;
 	}
-	:global(h2) {
+	:global(h1) {
 		@apply text-3xl font-semibold w-full;
 	}
-	:global(input) {
+	:global(h2) {
+		@apply text-2xl font-semibold w-full;
+	}
+	:global(input:not(.checkbox)) {
 		@apply border appearance-none outline-none my-1 rounded p-1 w-full;
 	}
-	:global(.github), :global(.button), :global(button) {
+	:global(.github),
+	:global(.button),
+	:global(button) {
 		@apply bg-black text-white my-1 rounded py-1 cursor-pointer w-full text-center hover:opacity-80;
 	}
 	:global(.link) {
@@ -34,7 +39,7 @@
 	:global(.github) {
 		@apply py-1;
 	}
-	:global(div) {
+	:global(div:not(.ignore)) {
 		@apply py-4 max-w-sm w-full flex flex-col place-items-center;
 	}
 	:global(form) {

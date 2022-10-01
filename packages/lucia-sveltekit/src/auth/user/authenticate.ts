@@ -1,37 +1,22 @@
-import type { DatabaseUser, User } from "../../types.js";
+import type { DatabaseUser, ServerSession } from "../../types.js";
 import {
     createAccessToken,
     createFingerprintToken,
     createRefreshToken,
     getAccountFromDatabaseData,
 } from "../../utils/auth.js";
-import { compare } from "../../utils/crypto.js";
+import { verify } from "../../utils/crypto.js";
 import { LuciaError } from "../../utils/error.js";
-import type {
-    AccessToken,
-    EncryptedRefreshToken,
-    FingerprintToken,
-    RefreshToken,
-} from "../../utils/token.js";
 import type { Context } from "../index.js";
 
-export type authenticateUser<UserData extends {}> = (
+type authenticateUser = (
     authId: string,
     identifier: string,
     password?: string
-) => Promise<{
-    user: User<UserData>;
-    access_token: AccessToken<UserData>;
-    refresh_token: RefreshToken;
-    encrypted_refresh_token: EncryptedRefreshToken;
-    fingerprint_token: FingerprintToken;
-    cookies: string[];
-}>;
+) => Promise<ServerSession>;
 
-export const authenticateUserFunction = <UserData extends {}>(
-    context: Context
-) => {
-    const authenticateUser: authenticateUser<UserData> = async (
+export const authenticateUserFunction = (context: Context) => {
+    const authenticateUser: authenticateUser = async (
         authId,
         identifier,
         password
@@ -39,16 +24,18 @@ export const authenticateUserFunction = <UserData extends {}>(
         const identifierToken = `${authId}:${identifier}`;
         const databaseData = (await context.adapter.getUserByIdentifierToken(
             identifierToken
-        )) as DatabaseUser<UserData> | null;
+        )) as DatabaseUser | null;
         if (!databaseData)
             throw new LuciaError("AUTH_INVALID_IDENTIFIER_TOKEN");
-        const account = getAccountFromDatabaseData<UserData>(databaseData);
+        const account = getAccountFromDatabaseData(databaseData);
         if (account.hashed_password) {
-            try {
-                await compare(password || "", account.hashed_password);
-            } catch {
-                throw new LuciaError("AUTH_INVALID_PASSWORD");
-            }
+            if (account.hashed_password.startsWith("$2a"))
+                throw new LuciaError("AUTH_OUTDATED_PASSWORD");
+            const isValid = await verify(
+                password || "",
+                account.hashed_password
+            );
+            if (!isValid) throw new LuciaError("AUTH_INVALID_PASSWORD");
         }
         const userId = account.user.user_id;
         const fingerprintToken = createFingerprintToken(context);
@@ -58,27 +45,17 @@ export const authenticateUserFunction = <UserData extends {}>(
             context
         );
         await context.adapter.setRefreshToken(refreshToken.value, userId);
-        const encryptedRefreshToken = refreshToken.encrypt();
-        const accessToken = await createAccessToken<UserData>(
+        const accessToken = await createAccessToken(
             account.user,
             fingerprintToken.value,
             context
         );
-        const accessTokenCookie = accessToken.createCookie();
-        const encryptedRefreshTokenCookie =
-            encryptedRefreshToken.createCookie();
-        const fingerprintTokenCookie = fingerprintToken.createCookie();
         return {
             user: account.user,
             access_token: accessToken,
             refresh_token: refreshToken,
             fingerprint_token: fingerprintToken,
-            encrypted_refresh_token: encryptedRefreshToken,
-            cookies: [
-                accessTokenCookie,
-                encryptedRefreshTokenCookie,
-                fingerprintTokenCookie,
-            ],
+            cookies: [accessToken.cookie(), refreshToken.encrypt().cookie(), fingerprintToken.cookie()]
         };
     };
     return authenticateUser;
